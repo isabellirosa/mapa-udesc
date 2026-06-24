@@ -2,7 +2,6 @@
   <div class="map-wrapper">
     <div v-if="mostrarPopup" class="modal-overlay">
       <div class="modal-content">
-        <div class="modal-icon">📍</div>
         <h2>Ativar Localização em Tempo Real?</h2>
         <p>
           Para ajudar você a navegar pelo campus, gostaríamos de mostrar onde você está no mapa em tempo real.
@@ -24,7 +23,7 @@
       <div class="filter-group">
         <label>
           <input type="checkbox" v-model="filtros.blocos" />
-          Blocos (A-L)
+          Blocos (A-M, N)
         </label>
         <label>
           <input type="checkbox" v-model="filtros.estruturas" />
@@ -35,12 +34,16 @@
           Escadas, Rampas, Elevadores
         </label>
         <label>
+          <input type="checkbox" v-model="filtros.mapatatil" />
+          Mapas Táteis
+        </label>
+        <label>
           <input type="checkbox" v-model="filtros.banheiros" />
-          Banheiros
+          Banheiros Acessíveis
         </label>
         <label>
           <input type="checkbox" v-model="filtros.entradas" />
-          Portão, Univille, Garten
+          Outros
         </label>
       </div>
 
@@ -64,11 +67,18 @@ import { onMounted, ref, watch, reactive, onUnmounted } from "vue";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
-const andarAtual = ref(1);
+
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
 const mapa = ref(null);
 const menuAberto = ref(true);
 const localizacaoStatus = ref("");
-const mostrarPopup = ref(false); // Controle do nosso modal customizado
+const mostrarPopup = ref(false); 
 
 let camadaImagemOverlay = null;
 let marcadoresAtuais = [];
@@ -78,53 +88,95 @@ let watchId = null;
 const filtros = reactive({
   blocos: true,
   estruturas: true,
-  acessibilidade: true,
-  banheiros: true,
+  acessibilidade: false,
+  mapatatil: false,
+  banheiros: false,
   entradas: true,
 });
 
-/*====================================================
-LIMITES
-====================================================*/
 const cantoInferiorEsquerdo = [-26.255592, -48.857007];
 const cantoSuperiorDireito = [-26.25116, -48.852338];
+const limitesUniversidade = L.latLngBounds(cantoInferiorEsquerdo, cantoSuperiorDireito);
 
-const limitesUniversidade = L.latLngBounds(
-  cantoInferiorEsquerdo,
-  cantoSuperiorDireito
-);
 
-/*====================================================
-PONTOS
-====================================================*/
 const pontosDeInteresse = [
-  { nome: "univille", coordenadas: [-26.251866, -48.856025], categoria: "entradas", tamanho: 70 },
-  { nome: "garten", coordenadas: [-26.25383115301317, -48.853101890364904], categoria: "entradas", tamanho: 70 },
-  { nome: "portao", coordenadas: [-26.252061, -48.854161], categoria: "entradas", tamanho: 55 },
-  { nome: "a", coordenadas: [-26.252243590865646, -48.85449532462595], categoria: "blocos", tamanho: 55 },
-  { nome: "b", coordenadas: [-26.252476937034576, -48.85471255925737], categoria: "blocos", tamanho: 55 },
-  { nome: "c", coordenadas: [-26.252600188291428, -48.85502835627211], categoria: "blocos", tamanho: 55 },
-  { nome: "d", coordenadas: [-26.252804915733297, -48.854714066797264], categoria: "blocos", tamanho: 55 },
-  { nome: "e", coordenadas: [-26.253161, -48.854839], categoria: "blocos", tamanho: 55 },
-  { nome: "k", coordenadas: [-26.25340301156343, -48.854834815446246], categoria: "blocos", tamanho: 55 },
-  { nome: "f", coordenadas: [-26.25362258956487, -48.85489194329959], categoria: "blocos", tamanho: 55 },
-  { nome: "g", coordenadas: [-26.25410200011257, -48.85460630403199], categoria: "blocos", tamanho: 55 },
-  { nome: "h", coordenadas: [-26.254036127022285, -48.855299999429725], categoria: "blocos", tamanho: 55 },
-  { nome: "i", coordenadas: [-26.253036346320055, -48.85532941250589], categoria: "blocos", tamanho: 55 },
-  { nome: "j", coordenadas: [-26.253124878831727, -48.85598553368974], categoria: "blocos", tamanho: 55 },
-  { nome: "l", coordenadas: [-26.254402088132885, -48.85582639179274], categoria: "blocos", tamanho: 55 },
-  { nome: "refeitorio", coordenadas: [-26.253403011562707, -48.85596105032403], categoria: "estruturas", tamanho: 55 },
-  { nome: "quadra", coordenadas: [-26.25290164023696, -48.85585495573923], categoria: "estruturas", tamanho: 55 },
-  { nome: "academia", coordenadas: [-26.252535674399454, -48.8557611028373], categoria: "estruturas", tamanho: 55 },
-  { nome: "rampa", coordenadas: [-26.253508, -48.854782], categoria: "acessibilidade", tamanho: 55 },
-  { nome: "elevador", coordenadas: [-26.253564, -48.854632], categoria: "acessibilidade", tamanho: 55 },
-  { nome: "banheiro", coordenadas: [-26.253597, -48.855198], category: "banheiros", tamanho: 55 },
-  { nome: "escada", coordenadas: [-26.25355066995676, -48.85527063674971], categoria: "acessibilidade", tamanho: 55 },
+  // Entradas e Acessos
+  { nome: "univille", coordenadas: [-26.251866, -48.856025], categoria: "entradas", tamanho: 100, titulo: "Portal Univille", desc: "Guarita principal de acesso ao Campus Universitário." },
+  { nome: "garten", coordenadas: [-26.25383115301317, -48.853101890364904], categoria: "entradas", tamanho: 100, titulo: "Acesso Garten Shopping", desc: "Portão de integração e tráfego de pedestres entre o Campus e o Shopping." },
+  { nome: "portao", coordenadas: [-26.252061, -48.854161], categoria: "entradas", tamanho: 55, titulo: "Portão Lateral", desc: "Acesso secundário para pedestres e veículos." },
+  
+  // Blocos 
+  { nome: "a", coordenadas: [-26.252243590865646, -48.85449532462595], categoria: "blocos", tamanho: 55, titulo: "Bloco A", desc: "Recepção Geral e Secretaria de Graduação." },
+  { nome: "b", coordenadas: [-26.252476937034576, -48.85471255925737], categoria: "blocos", tamanho: 55, titulo: "Bloco B", desc: "Complexo de Laboratórios e Salas de Aula." },
+  { nome: "c", coordenadas: [-26.252600188291428, -48.85502835627211], categoria: "blocos", tamanho: 55, titulo: "Bloco C", desc: "Licenciatura em Física, Licenciatura em Matemática e Licenciatura em Química." },
+  { nome: "d", coordenadas: [-26.252804915733297, -48.854714066797264], categoria: "blocos", tamanho: 55, titulo: "Bloco D", desc: "Laboratórios Multidisciplinares de Pesquisa e Práticas." },
+  { nome: "e", coordenadas: [-26.253161, -48.854839], categoria: "blocos", tamanho: 55, titulo: "Bloco E", desc: "Departamento de Engenharia Elétrica e Auditório do Bloco." },
+  { nome: "k", coordenadas: [-26.25340301156343, -48.854834815446246], categoria: "blocos", tamanho: 55, titulo: "Bloco K", desc: "Bloco de Salas de Aula Gerais." },
+  { nome: "f", coordenadas: [-26.25362258956487, -48.85489194329959], categoria: "blocos", tamanho: 55, titulo: "Bloco F", desc: "Ciência da Computação, TADS, Auditório e Reprografia Central." },
+  { nome: "g", coordenadas: [-26.25410200011257, -48.85460630403199], categoria: "blocos", tamanho: 55, titulo: "Bloco G", desc: "Departamento de Engenharia Mecânica e Oficinas Técnicas." },
+  { nome: "h", coordenadas: [-26.254036127022285, -48.855299999429725], categoria: "blocos", tamanho: 55, titulo: "Bloco H", desc: "Laboratórios práticos e salas de aula da Engenharia Civil." },
+  { nome: "i", coordenadas: [-26.253036346320055, -48.85532941250589], categoria: "blocos", tamanho: 55, titulo: "Bloco I", desc: "Biblioteca Universitária, Auditório Principal e Salas de Aula." },
+  { nome: "j", coordenadas: [-26.253124878831727, -48.85598553368974], categoria: "blocos", tamanho: 55, titulo: "Bloco J", desc: "Bloco de Apoio Pedagógico e Administrativo." },
+  { nome: "l", coordenadas: [-26.254402088132885, -48.85582639179274], categoria: "blocos", presidential: 55, titulo: "Bloco L", desc: "Engenharia de Produção e Secretaria Integrada de Engenharia Civil." },
+  { nome: "n", coordenadas: [-26.252570935150995, -48.855270774266835], categoria: "blocos", tamanho: 55, titulo: "Bloco N", desc: "Salas de aula teóricas e laboratórios de saúde / odontologia." },
+  { nome: "m", coordenadas: [-26.2545386681672, -48.855117896870645], categoria: "blocos", tamanho: 55, titulo: "Bloco M", desc: "Anfiteatros, clínicas universitárias e laboratórios integrados." },
+  
+  // Estruturas de Lazer / Conveniência
+  { nome: "refeitorio", coordenadas: [-26.253403011562707, -48.85596105032403], categoria: "estruturas", tamanho: 55, titulo: "Restaurante Universitário", desc: "Refeitório do Campus, Centros Acadêmicos (CAs) e Serviço de Orientação ao Estudante (SOE)." },
+  { nome: "quadra", coordenadas: [-26.25290164023696, -48.85585495573923], categoria: "estruturas", tamanho: 55, titulo: "Ginásio Universitário", desc: "Quadras Poliesportivas para eventos e práticas acadêmicas." },
+  { nome: "academia", coordenadas: [-26.252535674399454, -48.8557611028373], categoria: "estruturas", tamanho: 55, titulo: "Academia Univille", desc: "Academia do Campus e Espaço de Cuidado com a Saúde." },
+  
+  // Elevadores
+  { nome: "elevador", coordenadas: [-26.252981, -48.855392], categoria: "acessibilidade", tamanho: 55, titulo: "Elevador Acessível", desc: "Equipamento de acessibilidade motora para deslocamento entre os pavimentos." },
+  { nome: "elevador", coordenadas: [-26.253127947070404, -48.85540673086851], categoria: "acessibilidade", tamanho: 55, titulo: "Elevador Acessível", desc: "Equipamento de acessibilidade motora para deslocamento entre os pavimentos." },
+  { nome: "elevador", coordenadas: [-26.253573181365446, -48.85462903208101], categoria: "acessibilidade", tamanho: 55, titulo: "Elevador Acessível", desc: "Equipamento de acessibilidade motora para deslocamento entre os pavimentos." },
+  { nome: "elevador", coordenadas: [-26.253363845310407, -48.85452731514927], categoria: "acessibilidade", tamanho: 55, titulo: "Elevador Acessível", desc: "Equipamento de acessibilidade motora para deslocamento entre os pavimentos." },
+  { nome: "elevador", coordenadas: [-26.25220831673813, -48.854591525001425], categoria: "acessibilidade", tamanho: 55, titulo: "Elevador Acessível", desc: "Equipamento de acessibilidade motora para deslocamento entre os pavimentos." },
+  { nome: "elevador", coordenadas: [-26.252546236551225, -48.855005558211815], categoria: "acessibilidade", tamanho: 55, titulo: "Elevador Acessível", desc: "Equipamento de acessibilidade motora para deslocamento entre os pavimentos." },
+
+  // Mapas Táteis
+  { nome: "mapatatil", coordenadas: [-26.254424020590726, -48.855526879967876], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.254008349732562, -48.85518012544649], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.253974480183118, -48.854459150695966], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.253221760649925, -48.85443738926518], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.25336367731001, -48.855769747258755], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.252256382464473, -48.85522997679225], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.252598587774777, -48.85466228713793], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.252317589987218, -48.85463126585165], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+  { nome: "mapatatil", coordenadas: [-26.252289768387648, -48.854286929521805], categoria: "mapatatil", tamanho: 55, titulo: "Mapa Tátil", desc: "Dispositivo de orientação em braile e alto-relevo para deficientes visuais." },
+
+  // Escadas
+  { nome: "escada", coordenadas: [-26.252881287612166, -48.85552446883264], categoria: "acessibilidade", tamanho: 55 },
+  { nome: "escada", coordenadas: [-26.253548399900634, -48.854363777568835], categoria: "acessibilidade", tamanho: 55 },
+  { nome: "escada", coordenadas: [-26.253747565520356, -48.85539602992459], categoria: "acessibilidade", tamanho: 55 },
+
+  // Rampas
+  { nome: "rampa", coordenadas: [-26.253755957604582, -48.85516793417577], categoria: "acessibilidade", tamanho: 55, titulo: "Rampa de Acessibilidade", desc: "Acesso inclinado regulamentado para cadeirantes e pessoas com mobilidade reduzida." },
+  { nome: "rampa", coordenadas: [-26.25350834820514, -48.85480498507884], categoria: "acessibilidade", tamanho: 55, titulo: "Rampa de Acessibilidade", desc: "Acesso inclinado regulamentado para cadeirantes e pessoas com mobilidade reduzida." },
+  { nome: "rampa", coordenadas: [-26.252693180925366, -48.85429313377861], categoria: "acessibilidade", tamanho: 55, titulo: "Rampa de Acessibilidade", desc: "Acesso inclinado regulamentado para cadeirantes e pessoas com mobilidade reduzida." },
+  { nome: "rampa", coordenadas: [-26.25321622405971, -48.85432725719482], categoria: "acessibilidade", tamanho: 55, titulo: "Rampa de Acessibilidade", desc: "Acesso inclinado regulamentado para cadeirantes e pessoas com mobilidade reduzida." },
+  { nome: "rampa", coordenadas: [-26.25411763330989, -48.85445134233276], categoria: "acessibilidade", tamanho: 55, titulo: "Rampa de Acessibilidade", desc: "Acesso inclinado regulamentado para cadeirantes e pessoas com mobilidade reduzida." },
+
+  // Banheiros Acessíveis
+  { nome: "banheiro", coordenadas: [-26.254402362511847, -48.855679189426915], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE (Pessoas com Necessidades Especiais)." },
+  { nome: "banheiro", coordenadas: [-26.25455060679538, -48.85504024403134], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.253880052077417, -48.85485165855539], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.25425214077942, -48.854871626425684], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.25409693814938, -48.8553996656961], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.253581290571642, -48.85468588684532], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.253352594121818, -48.85480692262471], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.253306830438316, -48.85586989210336], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.25304939291578, -48.856019939355896], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.252583273510993, -48.855632860923876], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.252942236545156, -48.8554271130699], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.253144576363262, -48.85493515278803], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.252668705890002, -48.85500691451774], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.25271356261427, -48.854748137360694], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.252594594737655, -48.854600264706015], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
+  { nome: "banheiro", coordenadas: [-26.252300099961662, -48.85440890009408], categoria: "banheiros", tamanho: 55, titulo: "Sanitário Acessível", desc: "Instalação sanitária totalmente adaptada para PNE." },
 ];
 
-/*====================================================
-MAPA
-====================================================*/
+
 onMounted(() => {
   mapa.value = L.map("map", {
     maxBounds: limitesUniversidade,
@@ -139,7 +191,6 @@ onMounted(() => {
   atualizarImagemEAndar();
   atualizarMarcadores();
 
-  // 🔥 Abre o nosso popup customizado assim que entra no site
   mostrarPopup.value = true;
 
   window.addEventListener("resize", configurarLimitesEZoom);
@@ -152,18 +203,13 @@ onUnmounted(() => {
   window.removeEventListener("resize", configurarLimitesEZoom);
 });
 
-/*====================================================
-ZOOM
-====================================================*/
 const configurarLimitesEZoom = () => {
   mapa.value.fitBounds(limitesUniversidade);
   const zoom = mapa.value.getBoundsZoom(limitesUniversidade, true);
   mapa.value.setMinZoom(zoom);
 };
 
-/*====================================================
-MARCADORES
-====================================================*/
+
 const limparMarcadores = () => {
   marcadoresAtuais.forEach((m) => mapa.value.removeLayer(m));
   marcadoresAtuais = [];
@@ -188,8 +234,13 @@ const atualizarMarcadores = () => {
     const marcador = L.marker(ponto.coordenadas, { icon: icone })
       .addTo(mapa.value)
       .bindPopup(`
-        <div style="text-align:center;font-family:sans-serif;">
-          <strong>${ponto.nome.toUpperCase()}</strong>
+        <div style="font-family: sans-serif; min-width: 200px; padding: 5px;">
+          <h4 style="margin: 0 0 6px 0; color: #2c3e50; font-size: 15px; border-bottom: 1px solid #eef2f5; padding-bottom: 4px;">
+            ${ponto.titulo}
+          </h4>
+          <p style="margin: 0; font-size: 12.5px; color: #5a6c7d; line-height: 1.4; text-align: justify;">
+            ${ponto.desc}
+          </p>
         </div>
       `);
 
@@ -199,9 +250,7 @@ const atualizarMarcadores = () => {
 
 watch(filtros, atualizarMarcadores, { deep: true });
 
-/*====================================================
-TROCAR IMAGEM DO MAPA
-====================================================*/
+
 const atualizarImagemEAndar = () => {
   if (camadaImagemOverlay) {
     mapa.value.removeLayer(camadaImagemOverlay);
@@ -217,12 +266,10 @@ const atualizarImagemEAndar = () => {
   camadaImagemOverlay.bringToFront();
 };
 
-/*====================================================
-AÇÕES DO POPUP CUSTOMIZADO
-====================================================*/
+
 const aceitarLocalizacao = () => {
   mostrarPopup.value = false;
-  ativarLocalizacao(); // Dispara o rastreamento real
+  ativarLocalizacao();
 };
 
 const recusarLocalizacao = () => {
@@ -230,9 +277,7 @@ const recusarLocalizacao = () => {
   localizacaoStatus.value = "Localização não ativada.";
 };
 
-/*====================================================
-LOCALIZAÇÃO EM TEMPO REAL
-====================================================*/
+
 const ativarLocalizacao = () => {
   if (!navigator.geolocation) {
     localizacaoStatus.value = "Geolocalização não suportada.";
@@ -316,9 +361,6 @@ const ativarLocalizacao = () => {
   left: 0;
 }
 
-/*====================================================
-ESTILOS DO POPUP MODAL (NOVO)
-====================================================*/
 .modal-overlay {
   position: fixed;
   top: 0;
@@ -330,7 +372,7 @@ ESTILOS DO POPUP MODAL (NOVO)
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000; /* Fica acima de tudo, inclusive do menu */
+  z-index: 2000;
 }
 
 .modal-content {
@@ -396,9 +438,7 @@ ESTILOS DO POPUP MODAL (NOVO)
   background: #ddd;
 }
 
-/*====================================================
-RESTA DOS COMPONENTES
-====================================================*/
+
 .menu-toggle {
   position: absolute;
   top: 15px;
@@ -515,9 +555,6 @@ RESTA DOS COMPONENTES
   width: auto !important;
 }
 
-/*====================================================
-MARCADOR DO USUÁRIO
-====================================================*/
 :deep(.user-location-marker) {
   position: relative;
 }
